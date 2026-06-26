@@ -1,0 +1,6 @@
+# QueueStorm Investigator — runtime dependencies
+#
+# Django is the only non-stdlib runtime dependency. Everything else
+# (sqlparse, asgiref, tzdata) is installed transitively by Django's
+# standard install metadata.
+Django>=6.0,<7.0
