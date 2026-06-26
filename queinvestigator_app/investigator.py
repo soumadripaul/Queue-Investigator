@@ -489,21 +489,17 @@ _SAFE_REPLACEMENTS = {
 _CREDENTIAL_LINE = "Please do not share your PIN or OTP with anyone."
 
 
-def _enforce_safety(text: str) -> str:
+def _enforce_safety(text: str, append_reminder: bool = True) -> str:
     """Run the final safety pass over any generated text.
 
     The pass:
     1. Rewrites forbidden phrases like "we will refund" into safe
        alternatives. The rewrite only fires for phrases that should never
-       appear in a copilot reply — never for the legitimate credential
-       reminder we append.
-    2. Ensures the credential protection reminder is present exactly once.
-    3. Guards against refund/settlement confirmation phrases leaking
-       through any composition path.
-
-    This is intentionally idempotent: callers may invoke it on text that
-    already contains the reminder and we must not produce duplicates or
-    mangled sentences.
+       appear in a copilot reply.
+    2. If append_reminder is True, ensures a safety reminder (in either English
+       or Bangla) is present. If already present, leaves it in-place. If missing,
+       appends the default English safety reminder.
+    3. If append_reminder is False, strips any safety reminder.
     """
     out = text.strip()
     lowered = out.lower()
@@ -516,29 +512,48 @@ def _enforce_safety(text: str) -> str:
             out = pattern.sub(good, out)
             lowered = out.lower()
 
-    # 2) Strip any accidental duplicate credential reminders and re-add
-    #    a single canonical one. We look for the reminder as a sentence
-    #    anywhere in the text and remove all copies, then append exactly
-    #    one.
-    reminder_pattern = re.compile(
-        r"please\s+do\s+not\s+share\s+your\s+(?:pin|otp|password|information)[^.!?]*[.!?]?",
-        re.IGNORECASE,
-    )
-    # Capture positions so we can strip them while preserving spacing.
-    matches = list(reminder_pattern.finditer(out))
-    if matches:
-        # Remove matches from end to start to keep indices stable.
-        for m in reversed(matches):
-            out = out[: m.start()].rstrip() + out[m.end():]
-        out = out.strip()
+    if not append_reminder:
+        # Strip any English safety reminder
+        reminder_pattern = re.compile(
+            r"please\s+do\s+not\s+share\s+your\s+(?:pin|otp|password|information)[^.!?]*[.!?]?",
+            re.IGNORECASE,
+        )
+        matches = list(reminder_pattern.finditer(out))
+        if matches:
+            for m in reversed(matches):
+                out = out[: m.start()].rstrip() + out[m.end():]
+            out = out.strip()
+        # Strip any Bangla safety reminder
+        bangla_reminder_pattern = re.compile(
+            r"অনুগ্রহ\s+করে\s+(?:কারো|কারও)\s+সাথে\s+আপনার\s+(?:pin|otp|পিন|ওটিপি|পাসওয়ার্ড|তথ্য)[^.!?।]*[.!।]?",
+            re.IGNORECASE,
+        )
+        matches_bn = list(bangla_reminder_pattern.finditer(out))
+        if matches_bn:
+            for m in reversed(matches_bn):
+                out = out[: m.start()].rstrip() + out[m.end():]
+            out = out.strip()
+        return out
 
-    # 3) Append the canonical credential reminder exactly once (for any
-    #    non-phishing reply).
-    if out and not out.endswith((".", "!", "?")):
-        out = out + "."
-    out = (out + " " + _CREDENTIAL_LINE).strip()
-    if not out.endswith("."):
-        out = out + "."
+    # 2) If we should append/verify a safety reminder: check if one is already present.
+    has_reminder = False
+    # English check
+    if "do not share" in lowered or "don't share" in lowered or "never share" in lowered:
+        if any(w in lowered for w in ["pin", "otp", "password", "credential", "these"]):
+            has_reminder = True
+    # Bangla check
+    if "শেয়ার করবেন না" in lowered or "শেয়ার করবেননা" in lowered:
+        if any(w in lowered for w in ["পিন", "ওটিপি", "pin", "otp", "পাসওয়ার্ড"]):
+            has_reminder = True
+
+    if not has_reminder:
+        # Append the canonical English credential reminder exactly once.
+        if out and not out.endswith((".", "!", "?", "।")):
+            out = out + "."
+        out = (out + " " + _CREDENTIAL_LINE).strip()
+        if not out.endswith("."):
+            out = out + "."
+            
     return out
 
 
@@ -1012,8 +1027,8 @@ def investigate(payload: dict) -> dict:
     )
 
     # Belt-and-suspenders safety pass.
-    customer_reply = _enforce_safety(customer_reply)
-    next_action = _enforce_safety(next_action)
+    customer_reply = _enforce_safety(customer_reply, append_reminder=True)
+    next_action = _enforce_safety(next_action, append_reminder=False)
 
     # --- Step 6: confidence.
     confidence = 0.6
