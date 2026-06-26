@@ -1,171 +1,257 @@
 # QueueStorm Investigator
 
-Rule-based Django API service for the SUST Preliminary challenge.
+> **SUST Preliminary Challenge Submission** — Rule-based Django API for intelligent support ticket investigation.
 
-This service analyzes one complaint plus a short transaction history and returns a structured investigator response with evidence verdict, routing, and safe customer messaging.
+A safe internal copilot API for support agents. Submit one complaint and a short transaction history, and get back a fully structured investigator response: evidence verdict, case classification, department routing, and customer-safe messaging — all in under 30 seconds, with zero external model dependency.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [API Reference](#api-reference)
+- [Local Setup](#local-setup)
+- [Testing](#testing)
+- [AI Approach & Evidence Logic](#ai-approach--evidence-logic)
+- [Safety Guardrails](#safety-guardrails)
+- [Model Specification](#model-specification)
+- [Environment Variables](#environment-variables)
+- [Assumptions & Limitations](#assumptions--limitations)
+- [Submission Checklist](#submission-checklist)
+
+---
 
 ## Features
 
-- Exposes required endpoints: `GET /health`, `POST /analyze-ticket`
-- Deterministic evidence reasoning using complaint + transaction matching
-- Supports English, Bangla, and mixed complaint text patterns
-- Safety guardrails to prevent credential requests and unauthorized promises
-- Prompt-injection resistant rules (ignores adversarial instructions in complaint text)
-- Fast local execution with no external model/API dependency
+- **Two required endpoints** — `GET /health` and `POST /analyze-ticket`
+- **Multilingual support** — English, Bangla, and mixed Bangla-English complaint text
+- **Deterministic evidence reasoning** — complaint + transaction matching with no LLM dependency
+- **Structured output** — returns `relevant_transaction_id`, `evidence_verdict`, `case_type`, `severity`, `department`, and safe messaging
+- **Prompt-injection resistant** — adversarial instructions in complaint text are detected and ignored
+- **Safety guardrails** — no credential requests, no unauthorized refund promises
+
+---
 
 ## Tech Stack
 
-- Python 3.12+
-- Django 6
-- Rule-based investigator engine in `queinvestigator_app/investigator.py`
+| Component | Details |
+|-----------|---------|
+| Language | Python 3.12+ |
+| Framework | Django 6 |
+| Rule Engine | `queinvestigator_app/investigator.py` |
+| External APIs | None |
+| Runtime cost | **$0.00 per request** |
 
-## API Contract
+---
 
-### 1) Health
+## API Reference
 
-- Method: `GET`
-- Path: `/health`
-- Response:
+### `GET /health` — Health Check
 
+**Response `200 OK`:**
 ```json
 {"status": "ok"}
 ```
 
-### 2) Analyze Ticket
+---
 
-- Method: `POST`
-- Path: `/analyze-ticket`
-- Content-Type: `application/json`
-- Request/response follow the challenge schema.
+### `POST /analyze-ticket` — Ticket Analysis
+
+**Headers:** `Content-Type: application/json`
+
+Accepts the challenge request schema and returns the full structured response schema.
+
+**Example request:**
+```bash
+curl -X POST http://127.0.0.1:8000/analyze-ticket \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ticket_id": "TKT-001",
+    "complaint": "My payment failed and money was deducted.",
+    "transaction_history": [
+      {
+        "transaction_id": "TXN-1",
+        "timestamp": "2026-04-14T14:08:22Z",
+        "type": "payment",
+        "amount": 1200,
+        "counterparty": "MRC-12",
+        "status": "failed"
+      }
+    ]
+  }'
+```
+
+**Error responses:**
+- `400` — Malformed JSON
+- `422` — Missing or empty required fields (e.g. blank complaint)
+
+---
 
 ## Local Setup
 
-1. Create and activate a virtual environment (optional if you already use `queuevenv`):
+### Linux / macOS
 
 ```bash
+# 1. Create and activate virtual environment
 python -m venv .venv
-.venv\\Scripts\\activate
-```
+source .venv/bin/activate
 
-2. Install dependencies:
-
-```bash
+# 2. Install dependencies
 pip install -r requirements.txt
-```
 
-3. (Optional) copy env template:
+# 3. (Optional) Copy env template
+cp .env.example .env
 
-```bash
-copy .env.example .env
-```
-
-4. Run server:
-
-```bash
+# 4. Start the server
 python manage.py runserver 0.0.0.0:8000
-```
 
-5. Check readiness:
-
-```bash
+# 5. Confirm readiness
 curl http://127.0.0.1:8000/health
 ```
 
+### Windows
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+python manage.py runserver 0.0.0.0:8000
+```
+
+---
+
 ## Runbook (Judge Reproducibility)
 
-Use these exact commands from repo root:
+From the repository root, these two commands are all that's needed:
 
 ```bash
 pip install -r requirements.txt
 python manage.py runserver 0.0.0.0:8000
 ```
 
-Then call:
+Verify with:
 
-- `GET http://127.0.0.1:8000/health`
-- `POST http://127.0.0.1:8000/analyze-ticket`
+```bash
+GET  http://127.0.0.1:8000/health
+POST http://127.0.0.1:8000/analyze-ticket
+```
+
+---
 
 ## Testing
 
-### 1) API tests
+### 1. API unit tests
 
 ```bash
 python manage.py test
 ```
 
-### 2) Public sample-case evaluator
+### 2. Public sample-case evaluator
+
+Validates core fields (`relevant_transaction_id`, `evidence_verdict`, `case_type`, `department`) against all 10 public sample cases:
 
 ```bash
 python test_investigator.py
 ```
 
-This validates core fields against all 10 public sample cases (`txn`, `verdict`, `case`, `dept`).
+### 3. Generate sample output artifact
 
-### 3) Generate sample output artifact
+Writes investigator outputs for all sample cases to `sample_output.json`:
 
 ```bash
 python generate_sample_output.py
 ```
 
-Writes `sample_output.json`.
+---
 
-## AI Approach and Evidence Logic
+## AI Approach & Evidence Logic
 
-The solution is intentionally deterministic and rule-based instead of LLM-based:
+This service uses a **fully deterministic rule-based engine** — no LLM, no external API calls, no secrets in the request path.
 
-- Classifies complaint into required `case_type` taxonomy with multilingual keyword packs.
-- Extracts likely amounts/phone numbers from complaint text.
-- Scores each transaction in `transaction_history` and selects `relevant_transaction_id`.
-- Produces `evidence_verdict`:
-  - `consistent`
-  - `inconsistent`
-  - `insufficient_data`
-- Maps to severity, department, and human review policy.
-- Generates agent summary, action, and customer-safe reply.
+**Processing pipeline:**
 
-### Why rule-based?
+1. **Case classification** — Complaint text is matched against multilingual keyword and phrase packs to assign the required `case_type` taxonomy label.
+2. **Entity extraction** — Amounts and phone numbers are parsed from complaint text.
+3. **Transaction scoring** — Each entry in `transaction_history` is scored; the best match becomes `relevant_transaction_id`.
+4. **Evidence verdict** — One of three outcomes:
+   - `consistent` — complaint aligns with transaction data
+   - `inconsistent` — complaint contradicts transaction data
+   - `insufficient_data` — no clear correlation can be established
+5. **Routing & severity** — Maps findings to `severity`, `department`, and `human_review_required`.
+6. **Response generation** — Produces a safe agent summary, recommended next action, and customer-facing reply.
 
-- Predictable latency (<30s budget)
-- No outbound dependency risk
-- Easier to audit for strict safety requirements
-- No token/runtime model cost
+### Why Rule-Based?
 
-## Safety Logic
+| Criterion | Rule-Based (this) | LLM-Based |
+|-----------|:-----------------:|:---------:|
+| Latency predictability | ✅ | ⚠️ |
+| No outbound dependency | ✅ | ❌ |
+| Auditability for safety | ✅ | ⚠️ |
+| Runtime API cost | ✅ $0 | ❌ Variable |
+| Handles 30s budget | ✅ Always | ⚠️ Risk |
 
-Guardrails are enforced in both generation and post-processing:
+---
 
-- Never asks for PIN/OTP/password/full card number
-- Never confirms refund/reversal/account recovery without authority
-- Avoids directing users to suspicious or untrusted third parties
-- Adds credential-protection reminder in customer communications
-- Detects and ignores prompt-injection cues in complaint text
+## Safety Guardrails
 
-## MODELS
+Safety is enforced at both generation and post-processing stages:
 
-This submission uses **no external ML/LLM model** in runtime.
+- **No credential harvesting** — never asks for PIN, OTP, password, or full card number
+- **No unauthorized promises** — never confirms refunds, reversals, or account recovery without authority
+- **No third-party redirection** — avoids directing users to suspicious or unverified external parties
+- **Prompt-injection resistance** — adversarial instructions embedded in complaint text are detected and ignored
+- **Credential protection reminder** — added to all customer-facing message outputs
 
-- Model name: `N/A (deterministic rule engine)`
-- Where it runs: local Python process
-- Why chosen: strongest reliability/cost/safety tradeoff for this challenge window
-- Cost impact: effectively zero API cost per request
+---
 
-## Assumptions
+## Model Specification
 
-- Input follows documented JSON schema for primary fields.
-- Transaction history is short (typically 2 to 5 entries).
-- Currency values are in BDT.
-- Semantic validity checks are lightweight (e.g., empty complaint -> 422).
+| Metric | Specification |
+|--------|--------------|
+| Model name | N/A (Deterministic Rule Engine) |
+| Where it runs | Local Python process |
+| Why chosen | Safety, reproducibility, and latency |
+| External API dependency | None |
+| Runtime cost | **$0.00 per request** |
 
-## Known Limitations
+---
 
-- Rule-based parsing may miss unusual phrasing not covered by keyword packs.
-- No deep NLU context tracking beyond current ticket payload.
-- `recommended_next_action` remains template-oriented for operational consistency.
+## Environment Variables
+
+No external API keys or credentials are required. `.env.example` is included for optional Django configuration.
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `DJANGO_SECRET_KEY` | Django secret key | Set in `.env` |
+| `DJANGO_DEBUG` | Enable debug mode | `False` |
+| `DJANGO_ALLOW_ALL_HOSTS` | Allow all hosts | `False` |
+
+---
+
+## Assumptions & Limitations
+
+**Assumptions:**
+- Input follows the documented JSON schema for `ticket_id`, `complaint`, and `transaction_history`
+- Transaction histories are short (typically 2–5 entries)
+- Currency values are in BDT
+- Empty complaints return `422`
+
+**Known Limitations:**
+- Rule-based parsing may miss unusual phrasing not covered by keyword packs
+- No external account lookup or live system integration
+- Engine relies solely on the provided complaint and transaction payload
+- `recommended_next_action` is template-oriented for operational consistency
+
+---
 
 ## Submission Checklist
 
-- [x] Required endpoints implemented
-- [x] Dependency file included (`requirements.txt`)
-- [x] Sample output file included (`sample_output.json`)
-- [x] `.env.example` included
+- [x] Required endpoints implemented and validated (`/health`, `/analyze-ticket`)
+- [x] Dependency file included: `requirements.txt`
+- [x] Sample output artifact included: `sample_output.json`
+- [x] Environment template included: `.env.example`
 - [x] Reproducible runbook included in this README
+- [x] No external LLM or API dependency required to run locally
+- [x] Safety guardrails documented and enforced
